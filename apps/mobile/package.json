@@ -1,0 +1,37 @@
+{
+  "name": "@mobile-ai-coding-agent/mobile",
+  "version": "0.1.0",
+  "private": true,
+  "main": "index.ts",
+  "scripts": {
+    "start": "expo start",
+    "ios": "expo start --ios",
+    "android": "expo start --android",
+    "web": "expo start --web",
+    "typecheck": "tsc --noEmit",
+    "lint": "expo lint",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@react-navigation/native": "^7.0.0",
+    "@react-navigation/native-stack": "^7.0.0",
+    "@tanstack/react-query": "^5.0.0",
+    "expo": "~55.0.0",
+    "expo-secure-store": "~55.0.13",
+    "expo-status-bar": "~55.0.0",
+    "react": "19.2.0",
+    "react-dom": "19.2.0",
+    "react-native": "0.83.6",
+    "react-native-safe-area-context": "~5.6.2",
+    "react-native-screens": "~4.23.0",
+    "react-native-web": "~0.21.0",
+    "zustand": "^5.0.0"
+  },
+  "devDependencies": {
+    "@types/react": "~19.2.0",
+    "eslint": "^9.0.0",
+    "eslint-config-expo": "~55.0.0",
+    "typescript": "~5.9.0",
+    "vitest": "^4.1.5"
+  }
+}

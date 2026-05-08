@@ -1,0 +1,31 @@
+{
+  "expo": {
+    "name": "Mobile AI Coding Agent",
+    "slug": "mobile-ai-coding-agent",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "scheme": "mobileaicodingagent",
+    "userInterfaceStyle": "automatic",
+    "platforms": [
+      "ios",
+      "android",
+      "web"
+    ],
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.mobileaicodingagent.mobile"
+    },
+    "android": {
+      "package": "com.mobileaicodingagent.mobile",
+      "adaptiveIcon": {
+        "backgroundColor": "#111827"
+      }
+    },
+    "web": {
+      "bundler": "metro"
+    },
+    "plugins": [
+      "expo-secure-store"
+    ]
+  }
+}

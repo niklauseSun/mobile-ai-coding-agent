@@ -1,0 +1,215 @@
+name: Mobile AI Coding
+
+# Required repository secret:
+# - AI_PROVIDER_API_KEY: API key for an OpenAI-compatible chat completions provider.
+#
+# Optional repository secrets:
+# - AI_PROVIDER_BASE_URL: Provider base URL, for example https://api.example.com/v1.
+# - AI_PROVIDER_MODEL: Provider model name. Defaults to the script fallback when omitted.
+
+on:
+  workflow_dispatch:
+    inputs:
+      task_prompt:
+        description: Bounded coding request. Do not include secrets.
+        required: true
+        type: string
+      base_branch:
+        description: Branch the pull request should target.
+        required: true
+        default: main
+        type: string
+      target_branch:
+        description: Existing agent branch to update when branch_name is empty.
+        required: false
+        type: string
+      issue_number:
+        description: Optional related issue number.
+        required: false
+        type: string
+      branch_name:
+        description: Agent branch to create or update.
+        required: false
+        type: string
+      tech_stack:
+        description: Optional tech stack hint for context selection.
+        required: false
+        type: string
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: read
+
+concurrency:
+  group: mobile-ai-coding-${{ github.repository }}-${{ inputs.branch_name || inputs.target_branch || github.run_id }}
+  cancel-in-progress: false
+
+jobs:
+  ai-coding:
+    runs-on: ubuntu-latest
+    env:
+      BASE_BRANCH: ${{ inputs.base_branch }}
+      ISSUE_NUMBER: ${{ inputs.issue_number }}
+      TASK_PROMPT: ${{ inputs.task_prompt }}
+      TECH_STACK: ${{ inputs.tech_stack }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ inputs.base_branch }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Validate AI provider configuration
+        shell: bash
+        env:
+          AI_PROVIDER_API_KEY: ${{ secrets.AI_PROVIDER_API_KEY }}
+          AI_PROVIDER_BASE_URL: ${{ secrets.AI_PROVIDER_BASE_URL }}
+          AI_PROVIDER_MODEL: ${{ secrets.AI_PROVIDER_MODEL }}
+        run: |
+          if [ -z "${AI_PROVIDER_API_KEY}" ]; then
+            echo "::error::AI_PROVIDER_API_KEY repository secret is required."
+            exit 1
+          fi
+
+          if [ -z "${AI_PROVIDER_BASE_URL}" ]; then
+            echo "AI_PROVIDER_BASE_URL is not set; using the OpenAI-compatible default endpoint."
+          fi
+
+          if [ -z "${AI_PROVIDER_MODEL}" ]; then
+            echo "AI_PROVIDER_MODEL is not set; using the script fallback model."
+          fi
+
+      - name: Configure git author
+        shell: bash
+        run: |
+          git config user.name "mobile-ai-coding-agent[bot]"
+          git config user.email "mobile-ai-coding-agent[bot]@users.noreply.github.com"
+
+      - name: Create or update agent branch
+        id: branch
+        shell: bash
+        env:
+          REQUESTED_BRANCH_NAME: ${{ inputs.branch_name }}
+          REQUESTED_TARGET_BRANCH: ${{ inputs.target_branch }}
+        run: |
+          AGENT_BRANCH="${REQUESTED_BRANCH_NAME}"
+          if [ -z "${AGENT_BRANCH}" ]; then
+            AGENT_BRANCH="${REQUESTED_TARGET_BRANCH}"
+          fi
+          if [ -z "${AGENT_BRANCH}" ]; then
+            AGENT_BRANCH="mobile-ai-coding/${GITHUB_RUN_ID}"
+          fi
+
+          git check-ref-format --branch "${BASE_BRANCH}"
+          git check-ref-format --branch "${AGENT_BRANCH}"
+
+          git fetch origin "+refs/heads/${BASE_BRANCH}:refs/remotes/origin/${BASE_BRANCH}"
+
+          if git ls-remote --exit-code --heads origin "${AGENT_BRANCH}" >/dev/null 2>&1; then
+            git fetch origin "+refs/heads/${AGENT_BRANCH}:refs/remotes/origin/${AGENT_BRANCH}"
+            git checkout -B "${AGENT_BRANCH}" "origin/${AGENT_BRANCH}"
+          else
+            git checkout -B "${AGENT_BRANCH}" "origin/${BASE_BRANCH}"
+          fi
+
+          echo "AGENT_BRANCH=${AGENT_BRANCH}" >> "${GITHUB_ENV}"
+          echo "agent_branch=${AGENT_BRANCH}" >> "${GITHUB_OUTPUT}"
+
+      - name: Install minimal script dependencies
+        shell: bash
+        run: |
+          # The ai-coding scripts intentionally use Node.js built-ins plus the GitHub CLI.
+          node --version
+          gh --version
+
+      - name: Run AI coding script
+        shell: bash
+        env:
+          AI_PROVIDER_API_KEY: ${{ secrets.AI_PROVIDER_API_KEY }}
+          AI_PROVIDER_BASE_URL: ${{ secrets.AI_PROVIDER_BASE_URL }}
+          AI_PROVIDER_MODEL: ${{ secrets.AI_PROVIDER_MODEL }}
+        run: node scripts/ai-coding/run-ai-coding.mjs
+
+      - name: Install repository dependencies when present
+        shell: bash
+        run: |
+          corepack enable
+
+          if [ -f apps/mobile/pnpm-lock.yaml ]; then
+            cd apps/mobile
+            pnpm install --frozen-lockfile
+          elif [ -f pnpm-lock.yaml ]; then
+            pnpm install --frozen-lockfile
+          elif [ -f package-lock.json ]; then
+            npm ci
+          elif [ -f yarn.lock ]; then
+            yarn install --frozen-lockfile
+          else
+            echo "No supported lockfile found; skipping dependency installation."
+          fi
+
+      - name: Run checks if available
+        shell: bash
+        run: |
+          run_node_script_if_present() {
+            local package_dir="$1"
+            local package_manager="$2"
+            local script_name="$3"
+
+            if [ ! -f "${package_dir}/package.json" ]; then
+              return 0
+            fi
+
+            if node -e "const p=require('./${package_dir}/package.json'); process.exit(p.scripts && p.scripts['${script_name}'] ? 0 : 1)"; then
+              (
+                cd "${package_dir}"
+                "${package_manager}" run "${script_name}"
+              )
+            fi
+          }
+
+          if [ -f apps/mobile/pnpm-lock.yaml ]; then
+            run_node_script_if_present "apps/mobile" "pnpm" "lint"
+            run_node_script_if_present "apps/mobile" "pnpm" "typecheck"
+            run_node_script_if_present "apps/mobile" "pnpm" "test"
+          elif [ -f package.json ]; then
+            if [ -f pnpm-lock.yaml ]; then
+              PM="pnpm"
+            elif [ -f yarn.lock ]; then
+              PM="yarn"
+            else
+              PM="npm"
+            fi
+
+            run_node_script_if_present "." "${PM}" "lint"
+            run_node_script_if_present "." "${PM}" "typecheck"
+            run_node_script_if_present "." "${PM}" "test"
+          else
+            echo "No package.json found; skipping checks."
+          fi
+
+      - name: Commit and push changes
+        shell: bash
+        run: |
+          git add -A -- . ':(exclude).ai-coding'
+
+          if git diff --cached --quiet; then
+            echo "::error::AI coding completed without producing repository changes."
+            exit 1
+          fi
+
+          git commit -m "feat: apply mobile AI coding task"
+          git push --set-upstream origin "HEAD:${AGENT_BRANCH}"
+
+      - name: Create or update pull request
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/ai-coding/create-pr.mjs

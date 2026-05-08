@@ -1,0 +1,4 @@
+.DS_Store
+.ai-coding/
+.pnpm-store/
+node_modules/
